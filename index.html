@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>LazyFisher 雷达监控器 V10</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎣</text></svg>">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root {
+    --bg: #f4f7f6; --sidebar: #2c3e50; --primary: #1abc9c;
+    --accent: #2196f3; --text: #2c3e50; --muted: #7f8c8d;
+  }
+
+  body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; height: 100vh; background: var(--bg); color: var(--text); overflow: hidden; display: flex; }
+
+  /* 🏢 四栏式主工作区 */
+  #col-nav { width: 220px; background: var(--sidebar); display: flex; flex-direction: column; z-index: 5; box-shadow: 2px 0 5px rgba(0,0,0,0.1); flex-shrink: 0;}
+  #col-filters { width: 240px; background: #fff; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; z-index: 4; flex-shrink: 0;}
+  #col-list { width: 320px; background: #fdfdfd; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; z-index: 3; flex-shrink: 0;}
+  #col-chart { flex: 1; background: white; display: flex; justify-content: center; align-items: center; padding: 15px; position: relative; min-width: 0;}
+
+  /* 👈 第一栏: 钓场导航与折叠计算器 */
+  #sidebar-content { flex-grow: 1; overflow-y: auto; }
+  #sidebar-content::-webkit-scrollbar { width: 4px; }
+  #sidebar-content::-webkit-scrollbar-thumb { background: #4a6984; }
+  .section-title { background: #233142; padding: 10px 12px; font-size: 11px; color: #a4b0be; font-weight: bold; position: sticky; top: 0; z-index: 2;}
+  .tab { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid #34495e; font-size: 13px; color: #ecf0f1; transition: 0.2s; display: flex; justify-content: space-between; align-items: center;}
+  .tab:hover, .tab.active { background: var(--primary); font-weight: bold; border-left: 4px solid #f1c40f; padding-left: 8px;}
+  
+  /* 左侧底部折叠面板共用样式 */
+  .nav-details { background: #1a252f; color: #ecf0f1; border-top: 1px solid #000; flex-shrink: 0;}
+  .nav-details summary { padding: 10px 12px; cursor: pointer; font-size: 12px; font-weight: bold; outline: none; list-style: none; display: flex; align-items: center;}
+  .nav-details summary::-webkit-details-marker { display: none; }
+  .nav-details summary:hover { background: #233142; }
+  .nav-details-content { padding: 12px; padding-top: 5px; }
+
+  /* 试算器内部 */
+  .side-calc-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; color: #bdc3c7;}
+  .side-calc-input { background: #2c3e50; color: white; border: 1px solid #34495e; padding: 3px; border-radius: 3px; font-size: 11px; width: 50px; text-align: center; outline: none;}
+  .calc-divider { border-top: 1px dashed #34495e; margin: 8px 0; }
+
+  /* ⏺️ 第二栏: 上下文与过滤器 */
+  #spot-context-panel { padding: 12px; background: #e8f4f8; border-bottom: 3px solid var(--accent); display: none; flex-shrink: 0;}
+  #spot-title { font-size: 14px; font-weight: bold; margin-bottom: 8px; color: var(--text); }
+  .slot-btn { display: inline-block; padding: 3px 8px; margin: 0 4px 6px 0; border: 1px solid #bdc3c7; border-radius: 12px; font-size: 11px; cursor: pointer; background: white; color: var(--muted); font-weight: bold;}
+  .slot-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .vert-depth-row { display: flex; justify-content: space-between; align-items: center; font-size: 11px; padding: 3px 0; border-bottom: 1px dashed #ccc;}
+  .badge { padding: 2px 6px; border-radius: 8px; color: white; font-weight: bold; font-size: 10px; }
+  .b-up { background: #64b5f6; } .b-mid { background: #2196f3; } .b-down { background: #0d47a1; }
+  
+  #filters-container { padding: 12px; overflow-y: auto; flex-grow: 1; }
+  .filter-group { margin-bottom: 10px; }
+  .filter-title { font-size: 12px; font-weight: bold; color: var(--muted); display: block; margin-bottom: 6px; }
+  .filter-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+  .filter-tags label { font-size: 11px; cursor: pointer; background: #eee; padding: 4px 8px; border-radius: 12px; user-select: none; border: 1px solid transparent;}
+  .filter-tags input { display: none; }
+  .filter-tags label:has(input:checked) { background: var(--primary); color: white; font-weight: bold; }
+
+  /* 🐟 第三栏: 鱼类独立列表 */
+  #search-box { padding: 12px; background: white; border-bottom: 1px solid #eee; z-index: 2;}
+  #search-input { width: 100%; padding: 8px; border: 2px solid #bdc3c7; border-radius: 6px; box-sizing: border-box; font-size: 13px; outline: none; margin-bottom: 8px;}
+  #search-input:focus { border-color: var(--primary); }
+  
+  #clear-btn { width: 100%; padding: 6px; background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s;}
+  #clear-btn:hover { background: #cbd5e1; color: #1e293b; }
+
+  #fish-list-container { flex-grow: 1; overflow-y: auto; padding: 10px; background: #f8fafc;}
+  #fish-list-container::-webkit-scrollbar { width: 6px; }
+  #fish-list-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .fish-item { padding: 10px; border: 1px solid #edf2f7; border-radius: 6px; margin-bottom: 8px; display: flex; align-items: flex-start; cursor: pointer; background: #fff;}
+  .fish-item:hover { border-color: #a0aec0; }
+  .fish-item input { margin-right: 8px; margin-top: 2px; transform: scale(1.2); accent-color: var(--primary);}
+  .fish-info { flex: 1; min-width: 0; }
+  .f-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  .f-name { font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display:flex; align-items:center; gap:6px;}
+  .f-meta { font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 600;}
+  
+  /* 🎯 第四栏: 雷达图 */
+  canvas { max-width: 100%; max-height: 100%; object-fit: contain; }
+
+  /* 标签颜色 */
+  .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; margin-right: 4px; color: white; font-weight: bold; display: inline-block;}
+  .tag.rarity-常见 { background: #a4b0be; } .tag.rarity-少见 { background: #2ed573; }
+  .tag.rarity-稀有 { background: #ffa502; } .tag.rarity-罕见 { background: #9b59b6; } .tag.rarity-传奇 { background: #ff4757; }
+</style>
+</head>
+<body>
+
+<div id="col-nav">
+  <div id="sidebar-content"></div>
+  
+  <details class="nav-details" id="guild-details">
+    <summary style="color: #f39c12;">📜 协会委托贴板</summary>
+    <div class="nav-details-content">
+      <textarea id="guild-input" style="width:100%; height:80px; padding:6px; border:1px solid #34495e; border-radius:4px; box-sizing:border-box; font-size:10px; resize:none; background:#2c3e50; color:white; font-family:monospace;" oninput="parseGuildTasks(this.value)" placeholder="贴上任务 JSON..."></textarea>
+      <div style="text-align:right; margin-top:6px;">
+        <button style="background:#e74c3c; color:white; border:none; padding:4px 10px; border-radius:3px; cursor:pointer; font-weight:bold; font-size:11px;" onclick="document.getElementById('guild-input').value=''; parseGuildTasks('');">清空任务</button>
+      </div>
+    </div>
+  </details>
+
+  <details class="nav-details" id="calc-details">
+    <summary style="color: #3498db;">📏 抛距与线长试算</summary>
+    <div class="nav-details-content">
+      <div class="side-calc-row"><span>竿型:</span><select id="calc-type" class="side-calc-input" onchange="updIdeal()"><option value="MATCH_ROD">赛竿/路亚</option><option value="HAND_ROD">手竿</option><option value="BOTTOM_ROD">底钓竿</option><option value="ISO_ROD">矶竿</option><option value="SURF_ROD">远投竿</option></select></div>
+      <div class="side-calc-row"><span>长度(m):</span><input type="number" id="calc-len" class="side-calc-input" value="5.1" step="0.1" oninput="updIdeal()"></div>
+      <div class="side-calc-row"><span>硬度:</span><input type="number" id="calc-hardness" class="side-calc-input" value="7.4" step="0.1" oninput="updIdeal()"></div>
+      <div class="side-calc-row" id="row-wt"><span>配重(g):</span><input type="number" id="calc-wt" class="side-calc-input" value="9.5" step="0.1" oninput="updIdeal()"></div>
+      
+      <div class="calc-divider"></div>
+      <div style="text-align: center; color: #3498db; font-weight: bold; font-size: 16px; margin-top: 4px;" id="calc-ideal">0.0m</div>
+      
+      <div class="calc-divider"></div>
+      <div style="font-size:11px; color:#3498db; font-weight:bold; margin-bottom:6px;">📐 初始线长换算 (填2项得第3项)</div>
+      <div class="side-calc-row"><span>抛距(m):</span><input type="number" id="tri-cast" class="side-calc-input" oninput="onTri('cast')"></div>
+      <div class="side-calc-row"><span>水深(m):</span><input type="number" id="tri-depth" class="side-calc-input" oninput="onTri('depth')"></div>
+      <div class="side-calc-row"><span>线长(m):</span><input type="number" id="tri-line" class="side-calc-input" oninput="onTri('line')"></div>
+    </div>
+  </details>
+
+  <details class="nav-details" id="time-details">
+    <summary style="color: #1abc9c;">⏳ 现实与系统时间</summary>
+    <div class="nav-details-content">
+      <div class="side-calc-row"><span>现实时间:</span><strong id="real-time" style="color:#1abc9c;">00:00</strong></div>
+      <div class="side-calc-row"><span>游戏指针:</span><strong id="game-time" style="color:#ff4757;">00:00</strong></div>
+      <div class="side-calc-row" style="margin-top:8px;">
+        <input type="number" id="calib-h" class="side-calc-input" min="0" max="23" placeholder="时" style="width:40px;">
+        <button onclick="calibTime()" style="background:var(--primary); color:white; border:none; padding:3px 8px; border-radius:3px; cursor:pointer; font-weight:bold; font-size:11px;">校准</button>
+      </div>
+    </div>
+  </details>
+</div>
+
+<div id="col-filters">
+  <div id="spot-context-panel">
+    <div id="spot-title">📍 未知钓场</div>
+    <div id="slot-buttons-container" style="margin-bottom:8px;"></div>
+    <div id="depth-indicator"></div>
+  </div>
+  <div id="filters-container">
+    <div class="filter-group">
+      <span class="filter-title">🏊 泳层:</span>
+      <div class="filter-tags" id="tags-layer">
+        <label><input type="checkbox" value="上层">上层</label>
+        <label><input type="checkbox" value="中层">中层</label>
+        <label><input type="checkbox" value="下层">下层</label>
+      </div>
+    </div>
+    <div class="filter-group"><span class="filter-title">🐛 活饵:</span><div class="filter-tags" id="tags-bait"></div></div>
+    <div class="filter-group"><span class="filter-title">🐟 拟饵:</span><div class="filter-tags" id="tags-lure"></div></div>
+  </div>
+</div>
+
+<div id="col-list">
+  <div id="search-box">
+    <input type="search" id="search-input" placeholder="🔍 搜寻鱼种...">
+    <button id="clear-btn" onclick="clearChecked()">🧹 清空所有打勾状态</button>
+  </div>
+  <div id="guild-panel" style="display:none; padding:12px; background:#fff3e0; border-bottom:1px solid #f39c12;"></div>
+  <div id="fish-list-container"><div id="fish-list"></div></div>
+</div>
+
+<div id="col-chart">
+  <canvas id="clockChart"></canvas>
+</div>
+
+<script>
+// 1. 严格锁定 23个岸钓 + 7个船钓原生解锁顺序
+const REGION_SHORE = [
+  "青溪镇·村边鱼塘",
+  "江陵县·乌沙下游河道",
+  "白鹭湖·芦苇浅湾",
+  "临川市·旧城运河",
+  "雾岭山·溪流石滩",
+  "回声峡·激流奔段",
+  "石门水库·大坝深水区",
+  "莲影泽·荷叶湿地",
+  "玄武坑·采石深潭",
+  "南岬镇·河口海湾",
+  "红树湾·潮汐泥滩",
+  "白礁港·防波堤",
+  "银鳞岛·近海礁盘",
+  "风裂岬·外台",
+  "黑礁断面",
+  "海杉礁·海带浅礁",
+  "玄潮台·海山边缘",
+  "暴线礁·远浪台",
+  "渊门峡·岸投端",
+  "天落库壁",
+  "蓝潮断岸",
+  "王流海岬",
+  "夜坠海沟缘"
+];
+
+const REGION_BOAT = [
+  "白鹭湖·晨雾船钓之旅",
+  "石门水库·深湾船钓之旅",
+  "白礁港·近海船钓之旅",
+  "蓝潮岬·外缘船钓之旅",
+  "银鳞岛·外海船钓之旅",
+  "赤湾深槽船钓之旅",
+  "巨影海峡船钓之旅"
+];
+
+// 繁简对照字典
+const T2S_MAP = {
+  '魚':'鱼', '鱈':'鳕', '鱔':'鳝', '鯧':'鲳', '鰻':'鳗', '麗':'丽', '鮋':'鲉', '鱵':'鱵', '鯛':'鲷', '魨':'鲀', '條':'条', '鱘':'鲟', '鱸':'鲈', '鱧':'鳢', '魴':'鲂', '鱅':'鳙', '鱖':'鳜', '鳡':'鳡', '鱒':'鳟', '鱂':'鳉', '鯰':'鲶', '鮊':'', '顙':'颡', '鰍':'鳅', '鰟':'鳑', '鮍':'鲏', '灣':'湾', '灘':'滩', '礁':'礁', '盤':'盘', '庫':'库', '壩':'坝', '峽':'峡', '嶺':'岭', '溪':'溪', '塘':'塘', '烏':'乌', '縣':'县', '葦':'苇', '濕':'湿', '霧':'雾', '採':'采', '運':'运', '舊':'旧', '蘆':'芦', '晨':'晨', '船':'船', '釣':'钓', '流':'流', '石':'石', '激':'激', '奔':'奔', '段':'段', '遊':'游', '河':'河', '道':'道', '荷':'荷', '葉':'叶', '地':'地', '澤':'泽', '影':'影', '蓮':'莲', '邊':'边', '紅':'红', '鯡':'鲱', '層':'层', '蟲':'虫', '餌':'饵', '蝦':'虾', '藻':'藻', '團':'团', '螺':'螺', '肉':'肉', '草':'草', '貝':'贝', '類':'类', '面':'面', '昆':'昆', '傳':'传', '奇':'奇', '見':'见', '稀':'稀', '有':'有', '暹':'暹', '羅':'罗', '鯉':'鲤', '虎':'虎', '鮡':'鮡', '鰉':'皇', '湄':'湄', '公':'公', '魟':'魟', '達':'达'
+};
+
+
+// 2. 原生云端硬碟数据库完整载入 (包含天落库壁等所有核心隐藏巨物)
+const JSON_URL = 'https://gist.githubusercontent.com/DelWish-GH/fb39d922fd11ef740e6505e987c8f040/raw/LazyFisher_Fish_DEX.json';
+
+
+const SPOT_INFO_DB = {
+  // === 淡水區域 ===
+  "青溪镇·村边鱼塘": { 
+    bases: [0.4, 0.8, 1.2, 1.6], 
+	castOffset: -1.6,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "0%", castOffset: -2}, {name: "深浅交界", bias: 1.05, snag: "2%", castOffset: 1.6}, {name: "水草阴影", bias: 0.9, snag: "4%", castOffset: -0.4}],
+    recommended_methods: ["手竿", "底釣"]
+  },
+  "江陵县·乌沙下游河道": { 
+    bases: [0.5, 1.7, 2.9, 4.0], 
+	castOffset: 0.4,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["手竿", "路亞"]
+  },
+  "白鹭湖·芦苇浅湾": { 
+    bases: [0.8, 2.2, 3.7, 5.0], 
+	castOffset: -0.9,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["手竿", "賽竿", "路亞"]
+  },
+  "临川市·旧城运河": { 
+    bases: [0.6, 1.5, 2.4, 3.2], 
+	castOffset: -0.2,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["手竿", "底釣"]
+  },
+  "雾岭山·溪流石滩": { 
+    bases: [0.3, 1.1, 2.0, 2.8], 
+	castOffset: 1.2,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["手竿", "路亞"]
+  },
+  "回声峡·激流奔段": { 
+    bases: [0.5, 1.5, 2.7, 3.6], 
+	castOffset: 2,
+    spots: [{name: "白沫线", bias: 0.85, snag: "12%", castOffset: 0.8}, {name: "巨石尾流", bias: 1.1, snag: "18%", castOffset: 1.2}, {name: "掏岸阴影", bias: 0.95, snag: "22%", castOffset: -1}],
+    recommended_methods: ["路亞", "飛螢"] 
+  },
+  "石门水库·大坝深水区": { 
+    bases: [2.0, 7.3, 13.2, 18.0], 
+	castOffset: 3,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["底釣", "賽竿", "路亞"]
+  },
+  "莲影泽·荷叶湿地": { 
+    bases: [0.6, 2.0, 3.5, 4.8], 
+	castOffset: -0.9,
+    spots: [{name: "荷叶缺口", bias: 0.8, snag: "18%", castOffset: -0.8}, {name: "芦苇水道", bias: 1.0, snag: "16%", castOffset: 0.2}, {name: "黑泥深窝", bias: 1.2, snag: "24%", castOffset: 1.4}],
+    recommended_methods: ["手竿", "路亞(水面系)"]
+  },
+  "玄武坑·采石深潭": { 
+    bases: [3.0, 9.3, 16.3, 22.0], 
+	castOffset: 2.4,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["底釣", "賽竿"]
+  },
+  "天落库壁": { 
+    bases: [9.0, 18.6, 29.3, 38.0], 
+	castOffset: 2.2,
+    spots: [{name: "坝影深槽", bias: 1.45, snag: "24%", castOffset: 1.6}, {name: "机尾回流", bias: 1.05, snag: "19%", castOffset: 0.8}, {name: "岩壁折角", bias: 1.2, snag: "27%", castOffset: 1.2}],
+    recommended_methods: ["底釣", "重型路亞"]
+  },
+
+  // === 海水/汽水區域 ===
+  "南岬镇·河口海湾": { 
+    bases: [1.0, 3.3, 5.9, 8.0], 
+	castOffset: 1.2,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["底釣", "路亞", "賽竿"]
+  },
+  "红树湾·潮汐泥滩": { 
+    bases: [0.8, 2.4, 4.1, 5.5], 
+	castOffset: 0.6,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["底釣", "路亞", "賽竿"]
+  },
+  "白礁港·防波堤": { 
+    bases: [2.0, 5.3, 9.0, 12.0], 
+	castOffset: 3.1,
+    spots: [{name: "堤脚阴影", bias: 0.95, snag: "18%", castOffset: -0.2}, {name: "外拐角", bias: 1.15, snag: "22%", castOffset: 2.2}, {name: "乱石台阶", "bias": 1.05, snag: "28%", castOffset: 0.8}],
+    recommended_methods: ["賽竿(磯釣)", "路亞", "底釣"]
+  },
+  "银鳞岛·近海礁盘": { 
+    bases: [4.0, 11.9, 20.8, 28.0], 
+	castOffset: 4.6,
+    spots: [{name: "近岸缓坡", bias: 0.7, snag: "5%", castOffset: -2}, {name: "深浅交界", bias: 1.15, snag: "12%", castOffset: 1.6}, {name: "障碍阴影", bias: 0.95, snag: "22%", castOffset: -0.4}],
+    recommended_methods: ["賽竿(磯釣)", "路亞", "底釣"]
+  },
+  "风裂岬·外台": { 
+    bases: [6.0, 11.9, 18.6, 24.0], 
+	castOffset: 4.9,
+    spots: [{name: "白浪边线", bias: 0.9, snag: "16%", castOffset: 1.4}, {name: "外台落差", bias: 1.18, snag: "24%", castOffset: 2.5}, {name: "饵鱼阴影带", bias: 0.98, snag: "18%", castOffset: 0.8}],
+    recommended_methods: ["重型路亞(岸拋)", "底釣"]
+  },
+  "黑礁断面": { 
+    bases: [8.0, 16.6, 26.2, 34.0], 
+	castOffset: 5.7,
+    spots: [{name: "断面尖角", bias: 1.12, snag: "24%", castOffset: 2.9}, {name: "暗槽伏击带", bias: 1.25, snag: "31%", castOffset: 3.3}, {name: "泡沫回卷角", bias: 0.92, snag: "20%", castOffset: 1.2}],
+    recommended_methods: ["重型路亞(岸拋)", "重型底釣"]
+  },
+  "海杉礁·海带浅礁": { 
+    bases: [5.0, 9.9, 15.5, 20.0], 
+	castOffset: 4,
+    spots: [{name: "海带水道", bias: 0.95, snag: "20%", castOffset: 1}, {name: "礁壁断层", bias: 1.2, snag: "30%", castOffset: 2.6}, {name: "白浪边线", bias: 0.85, snag: "18%", castOffset: 0.4}],
+    recommended_methods: ["賽竿(磯釣)", "防掛底路亞"]
+  },
+  "玄潮台·海山边缘": { 
+    bases: [12.0, 21.2, 31.6, 40.0], 
+	castOffset: 5.6,
+    spots: [{name: "金枪潮线", bias: 0.9, snag: "16%", castOffset: 3.2}, {name: "深层抬升带", bias: 1.25, snag: "24%", castOffset: 2.8}, {name: "强流壁", bias: 1.05, snag: "20%", castOffset: 1.8}],
+    recommended_methods: ["重型路亞(波扒/鐵板)", "重型底釣"]
+  },
+  "暴线礁·远浪台": { 
+    bases: [14.0, 24.6, 36.4, 46.0], 
+	castOffset: 6.2,
+    spots: [{name: "风切潮壁", bias: 1.05, snag: "20%", castOffset: 3}, {name: "白浪礁冠", bias: 0.85, snag: "18%", castOffset: 2.5}, {name: "礁根落差", bias: 1.28, snag: "28%", castOffset: 2.2}],
+    recommended_methods: ["重型路亞(岸拋)"]
+  },
+  "渊门峡·岸投端": { 
+    bases: [22.0, 37.2, 54.2, 68.0], 
+	castOffset: 7.4,
+    spots: [{name: "峡口唇缘", bias: 1.08, snag: "24%", castOffset: 3.4}, {name: "黑潮门", bias: 1.35, snag: "30%", castOffset: 2.8}, {name: "深回声台阶", bias: 1.22, snag: "26%", castOffset: 2.4}],
+    recommended_methods: ["重型路亞(鐵板)", "極限底釣"]
+  },
+  "蓝潮断岸": { 
+    bases: [11.0, 22.6, 35.5, 46.0], 
+	castOffset: 2.6,
+    spots: [{name: "断层边线", bias: 1.18, snag: "22%", castOffset: 1.4}, {name: "蓝潮裂流", bias: 1.32, snag: "18%", castOffset: 2}, {name: "台地下槽", bias: 1.55, snag: "29%", castOffset: 2.3}],
+    recommended_methods: ["重型路亞", "重型底釣"]
+  },
+  "王流海岬": { 
+    bases: [18.0, 35.8, 55.8, 72.0], 
+	castOffset: 3.1,
+    spots: [{name: "浪冠角", bias: 1.12, snag: "26%", castOffset: 2.8}, {name: "分潮脊", bias: 1.35, snag: "20%", castOffset: 3}, {name: "岬底断崖", bias: 1.62, snag: "31%", castOffset: 2.5}],
+    recommended_methods: ["重型路亞(大型鐵板)"]
+  },
+  "夜坠海沟缘": { 
+    bases: [26.0, 56.4, 90.4, 118.0], 
+	castOffset: 3.8,
+    spots: [{name: "沟缘豁口", bias: 1.48, snag: "28%", castOffset: 3.2}, {name: "黑潮切面", bias: 1.7, snag: "22%", castOffset: 3.6}, {name: "海沟台阶", bias: 1.95, snag: "34%", castOffset: 3.4}],
+    recommended_methods: ["極限底釣", "重型路亞(深水鐵板)"]
+  },
+
+  // === 船釣之旅 (無特定 Spot) ===
+  "白鹭湖·晨雾船钓之旅": { 
+    bases: [2.5, 4.6, 7.0, 9.0], 
+	castOffset: 6.8,
+    spots: [],
+    recommended_methods: ["船釣(路亞)", "船釣(活餌)"]
+  },
+  "石门水库·深湾船钓之旅": { 
+    bases: [6.0, 11.9, 18.6, 24.0], 
+	castOffset: 8.2,
+    spots: [],
+    recommended_methods: ["船釣(垂直鐵板)", "船釣(底釣)"]
+  },
+  "白礁港·近海船钓之旅": { 
+    bases: [5.0, 9.3, 14.1, 18.0], 
+	castOffset: 8.4,
+    spots: [],
+    recommended_methods: ["船釣(路亞)", "船釣(底釣)"]
+  },
+  "蓝潮岬·外缘船钓之旅": { 
+    bases: [7.0, 13.3, 20.3, 26.0], 
+	castOffset: 9.3,
+    spots: [],
+    recommended_methods: ["船釣(鐵板)", "船釣(拖釣)"]
+  },
+  "银鳞岛·外海船钓之旅": { 
+    bases: [8.0, 15.9, 24.8, 32.0],
+	castOffset: 10.2,
+    spots: [],
+    recommended_methods: ["船釣(鐵板)", "船釣(波扒)"]
+  },
+  "赤湾深槽船钓之旅": { 
+    bases: [10.0, 18.6, 28.2, 36.0],
+	castOffset: 10.9, 
+    spots: [],
+    recommended_methods: ["船釣(深海鐵板)", "船釣(重型底釣)"]
+  },
+  "巨影海峡船钓之旅": { 
+    bases: [32.0, 67.6, 107.6, 140.0], 
+	castOffset: 3.4,
+    spots: [],
+    recommended_methods: ["船釣(極限鐵板)", "船釣(重型拖釣)"]
+  }
+};
+
+
+
+
+
+
+
+// 防呆機制
+if(typeof rawData === 'undefined') { alert("請在腳本頂部貼入你的資料變數！"); window.rawData=[]; window.REGION_SHORE=[]; window.REGION_BOAT=[]; window.SPOT_INFO_DB={}; window.T2S_MAP={};}
+
+// ... (前面保留你的 SPOT_INFO_DB 物件設定) ...
+
+// ==============================
+// 🌟 協會委託解析邏輯 (支援 LocalStorage 儲存)
+// ==============================
+let guildTasks = null;
+
+function parseGuildTasks(text) {
+  if(!text || !text.trim()) {
+    guildTasks = null;
+    localStorage.removeItem('lazyfisher_guild_tasks');
+    renderFishList();
+    return;
+  }
+  try {
+    let data = JSON.parse(text);
+    if(data && data.content && Array.isArray(data.content)) {
+      guildTasks = data.content.map(t => {
+        return {
+          fish_name: t.fish_name,
+          reward_price: parseInt((t.reward_price||"0").replace(/,/g, '')),
+          progress: t.progress,
+          status: t.status,
+          category: t.category // 記錄任務難度
+        };
+      });
+      localStorage.setItem('lazyfisher_guild_tasks', text);
+      renderFishList();
+    }
+  } catch(e) {
+    // 貼上中忽略錯誤
+  }
+}
+
+function updateGuildPanel() {
+  const panel = document.getElementById('guild-panel');
+  if(!guildTasks || currentTab === '圖鑑查詢') {
+    panel.style.display = 'none';
+    return;
+  }
+  
+  let tasksInSpot = guildTasks.filter(task => {
+     if(task.status === "已交付" || task.status === "已完成") return false;
+     return FISH_DB.some(f => f.name === task.fish_name && f.regions.includes(currentTab));
+  });
+  
+  if(tasksInSpot.length === 0) {
+     panel.style.display = 'none';
+     return;
+  }
+  
+  let html = `<strong style="color:#d35400; display:block; margin-bottom:8px; font-size:12px;">📋 本区任务进度:</strong><div style="display:flex; flex-wrap:wrap; gap:6px;">`;
+  tasksInSpot.forEach(t => {
+     const tagColor = t.category === "高难挑战" ? "#e74c3c" : "#f39c12";
+     html += `<span style="background:${tagColor}; color:white; padding:3px 8px; border-radius:12px; font-weight:bold; font-size:11px;">${t.fish_name} (${t.progress})</span>`;
+  });
+  html += `</div>`;
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+// ==============================
+// 工具函數與全域變數
+// ==============================
+function toSimplified(str) { return str.split('').map(c => T2S_MAP[c] || c).join(''); }
+function tcscMatch(text, keyword) { return !keyword || toSimplified(text.toLowerCase()).includes(toSimplified(keyword.toLowerCase())); }
+function getUniqueColor(str) {
+  let hash = 0; for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return `hsl(${Math.abs(hash) % 360}, 85%, 45%)`;
+}
+
+// 🌟 全域變數定義區
+const FISH_DB = []; 
+const baitSet = new Set(); 
+const lureSet = new Set();
+let currentTab = '圖鑑查詢'; 
+let currentSlot = null; 
+let chartInstance = null;
+let gameBaseTime = Date.now(), gameHourOffset = 0, gameMinuteOffset = 0;
+window.currentGameHour = 0; 
+window.currentGameTimeStr = "00:00";
+let checkedFishNames = new Set();
+
+// ==============================
+// 🌟 核心：透過 Gist 非同步讀取 JSON
+// ==============================
+async function loadFishDatabase() {
+    try {
+        const res = await fetch(JSON_URL + '?t=' + Date.now());
+        const data = await res.json();
+        const fishList = data.content || [];
+
+        fishList.forEach(item => {
+            const details = item.details || {};
+            
+            // 解析時間："5:00、6:00、17:00" -> [5, 6, 17]
+            const hoursStr = details["咬钩时段"] || "";
+            const hoursArray = hoursStr.split('、')
+                .map(t => parseInt(t.split(':')[0]))
+                .filter(n => !isNaN(n));
+
+            // 解析區域："巨影海峡船钓之旅、白礁港" -> ["巨影海峡船钓之旅", "白礁港"]
+            const regionsStr = details["分布区域"] || "";
+            const regionsArray = regionsStr.split('、');
+
+            const bait = details["偏好饵料"] || "";
+            const lure = details["偏好拟饵"] || "";
+
+            if (bait) baitSet.add(bait);
+            if (lure) lureSet.add(lure);
+
+            FISH_DB.push({
+                name: item.name,
+                layer: details["水层"] || "未知",
+                bait: bait,
+                lure: lure,
+                hours: hoursArray,
+                regions: regionsArray,
+                rarity: item.rarity || "常见",
+                weight: details["最小重量"] || "未知"
+            });
+        });
+
+        console.log(`✅ 圖鑑已載入，共 ${FISH_DB.length} 筆資料`);
+
+        // ★ 資料載入完成後，執行系統初始化 ★
+        initializeApp(); 
+
+    } catch (error) {
+        console.error('⚠️ 圖鑑載入失敗:', error);
+        document.body.innerHTML = `<div style="padding: 20px; color: red;">資料庫讀取失敗，請檢查網路或 Gist URL 是否正確。</div>`;
+    }
+}
+
+
+function clearChecked() {
+  checkedFishNames.clear();
+  localStorage.removeItem('lazyfisher_checked_fish');
+  renderFishList(); 
+}
+
+// ==============================
+// UI 構建與過濾器 (需在資料載入後執行)
+// ==============================
+function initFilters() {
+  const fBait = document.getElementById('tags-bait'), fLure = document.getElementById('tags-lure');
+  Array.from(baitSet).sort().forEach(b => { if(b) fBait.innerHTML += `<label style="border-bottom: 2px solid ${getUniqueColor(b)}"><input type="checkbox" value="${b}">${b}</label>`; });
+  Array.from(lureSet).sort().forEach(l => { if(l) fLure.innerHTML += `<label style="border-bottom: 2px solid ${getUniqueColor(l)}"><input type="checkbox" value="${l}">${l}</label>`; });
+
+  document.querySelectorAll('.filter-tags input').forEach(i => i.addEventListener('change', renderFishList));
+  document.getElementById('search-input').addEventListener('input', renderFishList);
+}
+
+function switchTab(tabName) { 
+  currentTab = tabName; 
+  currentSlot = null; 
+  
+  localStorage.setItem('lazyfisher_current_tab', tabName);
+  localStorage.removeItem('lazyfisher_current_slot'); 
+  
+  buildContext(); 
+  renderFishList(); 
+}
+
+// ==============================
+// 釣位與水深上下文 
+// ==============================
+function buildContext() {
+  buildContextWithoutLoop();
+  updIdeal();
+}
+
+function buildContextWithoutLoop() {
+  const panel = document.getElementById('spot-context-panel');
+  if (currentTab === '圖鑑查詢' || !SPOT_INFO_DB[currentTab]) { panel.style.display = 'none'; return; }
+  
+  panel.style.display = 'block';
+  const region = SPOT_INFO_DB[currentTab];
+  
+  let methodsHtml = '';
+  if (region.recommended_methods && region.recommended_methods.length > 0) {
+    methodsHtml = '<div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:4px;">';
+    region.recommended_methods.forEach(m => {
+      methodsHtml += `<span style="background:#e8f8f5; color:#16a085; padding:1px 6px; border-radius:10px; font-size:10px; font-weight:bold; border:1px solid #1abc9c;">${m}</span>`;
+    });
+    methodsHtml += '</div>';
+  }
+  document.getElementById('spot-title').innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; width:100%;">
+      <span style="font-size:14px; font-weight:bold; color:var(--text);">📍 ${currentTab}</span>
+      ${methodsHtml}
+    </div>
+  `;
+  
+  const slotC = document.getElementById('slot-buttons-container');
+  slotC.innerHTML = '';
+  if (region.spots && region.spots.length > 0) {
+    region.spots.forEach(s => {
+      const btn = document.createElement('span'); btn.className = 'slot-btn'; btn.innerText = s.name;
+      btn.onclick = () => { 
+        currentSlot = currentSlot === s.name ? null : s.name; 
+        if (currentSlot) {
+          localStorage.setItem('lazyfisher_current_slot', currentSlot);
+        } else {
+          localStorage.removeItem('lazyfisher_current_slot');
+        }
+        buildContext(); 
+      };
+      if(currentSlot === s.name) btn.classList.add('active');
+      slotC.appendChild(btn);
+    });
+  }
+  
+  const d_max = region.bases[region.bases.length - 1];
+  const d_surface_max = Math.min(10.0, Math.max(0.2 * d_max, 0.05));
+  const d_mid_max = Math.max(d_surface_max, 0.6 * d_max);
+  
+  const fmt = (n) => parseFloat(n.toFixed(2));
+  const center_up = d_surface_max / 2;
+  const center_mid = (d_surface_max + d_mid_max) / 2;
+  const center_down = (d_mid_max + d_max) / 2;
+  
+  let biasVal = 1.0, snag = "未选定";
+  let regionCastOffset = region.castOffset || 0, spotCastOffset = 0, hasActiveSpot = false; 
+  
+  if(currentSlot && region.spots) { 
+    let s = region.spots.find(x => x.name === currentSlot); 
+    if(s) { 
+      biasVal = s.bias; 
+      snag = s.snag; 
+      spotCastOffset = s.castOffset || 0;
+      hasActiveSpot = true;
+    }
+  }
+  
+  const totalCastOffset = regionCastOffset + spotCastOffset;
+  let castDisplayHtml = '';
+  if (hasActiveSpot && window.currentRodIdealBase) {
+    const finalRecommendedCast = window.currentRodIdealBase + totalCastOffset;
+    castDisplayHtml = `<span style="color:#1abc9c; font-weight:bold;">📏 完美: <span style="font-family:monospace; font-size:12px;">${finalRecommendedCast.toFixed(2)}m</span></span>`;
+  } else {
+    const fmtOffset = totalCastOffset > 0 ? `+${totalCastOffset.toFixed(1)}` : totalCastOffset.toFixed(1);
+    castDisplayHtml = `<span style="color:#8e44ad; font-weight:bold;">📏 抛偏: <span style="font-family:monospace;">${fmtOffset}m</span></span>`;
+  }
+  
+  const rec_up = center_up * biasVal;
+  const rec_mid = center_mid * biasVal;
+  const rec_down = center_down * biasVal;
+  
+  const dInd = document.getElementById('depth-indicator');
+  dInd.innerHTML = `
+    <div class="vert-depth-row">
+      <div><span class="badge b-up">表层</span> <b>0~${fmt(d_surface_max)}m <span style="color:#a0aec0; font-size:10px;">(中:${fmt(center_up)}m)</span></b></div>
+      <span style="color:#1abc9c; font-weight:bold; background:#e8f8f5; padding:2px 6px; border-radius:4px;">推:${fmt(rec_up)}m</span>
+    </div>
+    <div class="vert-depth-row">
+      <div><span class="badge b-mid">中层</span> <b>${fmt(d_surface_max)}~${fmt(d_mid_max)}m <span style="color:#a0aec0; font-size:10px;">(中:${fmt(center_mid)}m)</span></b></div>
+      <span style="color:#2196f3; font-weight:bold; background:#ebf5fb; padding:2px 6px; border-radius:4px;">推:${fmt(rec_mid)}m</span>
+    </div>
+    <div class="vert-depth-row">
+      <div><span class="badge b-down">底层</span> <b>${fmt(d_mid_max)}~${fmt(d_max)}m <span style="color:#a0aec0; font-size:10px;">(中:${fmt(center_down)}m)</span></b></div>
+      <span style="color:#0d47a1; font-weight:bold; background:#eaf2f8; padding:2px 6px; border-radius:4px;">推:${fmt(rec_down)}m</span>
+    </div>
+    <div style="border-top:1px dashed #cbd5e1; margin-top:8px; padding-top:6px; display:flex; justify-content:space-between; font-size:11px;">
+      <span style="color:#2c3e50; font-weight:bold;">🎯 深偏: <span style="color:var(--accent); font-family:monospace;">x${biasVal}</span></span>
+      ${castDisplayHtml}
+      <span style="color:#d35400; font-weight:bold;">⚠️ 挂底: ${snag}</span>
+    </div>
+  `;
+}
+
+// ==============================
+// 魚類清單渲染 & 動態側邊欄
+// ==============================
+function renderFishList() {
+  const L = Array.from(document.querySelectorAll('#tags-layer input:checked')).map(e=>e.value);
+  const B = Array.from(document.querySelectorAll('#tags-bait input:checked')).map(e=>e.value);
+  const R = Array.from(document.querySelectorAll('#tags-lure input:checked')).map(e=>e.value);
+  const K = document.getElementById('search-input').value.trim();
+  
+  let filtered = FISH_DB.filter(f => 
+    (L.length===0 || L.includes(f.layer)) && (B.length===0 || B.includes(f.bait)) &&
+    (R.length===0 || R.includes(f.lure)) && tcscMatch(f.name, K)
+  );
+
+  const allowedRegions = new Set();
+  if (checkedFishNames.size > 0) {
+    FISH_DB.forEach(f => {
+      if (checkedFishNames.has(f.name)) f.regions.forEach(r => allowedRegions.add(r));
+    });
+  } else {
+    filtered.forEach(f => f.regions.forEach(r => allowedRegions.add(r)));
+  }
+
+  let sHtml = `<div class="tab ${currentTab === '圖鑑查詢' ? 'active' : ''}" onclick="switchTab('圖鑑查詢')">📖 全图鉴</div>`;
+  
+  let shoreCount = 0, shoreHtml = '';
+  REGION_SHORE.forEach(r => {
+    if (allowedRegions.has(r)) {
+      shoreCount++;
+      let rewardText = '';
+      if(guildTasks) {
+         let total = 0;
+         guildTasks.forEach(task => {
+            if(task.status !== "已交付" && task.status !== "已完成") {
+               if(FISH_DB.some(f => f.name === task.fish_name && f.regions.includes(r))) total += task.reward_price;
+            }
+         });
+         if(total > 0) rewardText = `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${total.toLocaleString()}</span>`;
+      }
+      shoreHtml += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')" style="display:flex; justify-content:space-between; align-items:center;"><span>${r}</span> ${rewardText}</div>`;
+    }
+  });
+  if (shoreCount > 0) sHtml += `<div class="section-title">🎣 岸钓 (${shoreCount})</div>` + shoreHtml;
+
+  let boatCount = 0, boatHtml = '';
+  REGION_BOAT.forEach(r => {
+    if (allowedRegions.has(r)) {
+      boatCount++;
+      let rewardText = '';
+      if(guildTasks) {
+         let total = 0;
+         guildTasks.forEach(task => {
+            if(task.status !== "已交付" && task.status !== "已完成") {
+               if(FISH_DB.some(f => f.name === task.fish_name && f.regions.includes(r))) total += task.reward_price;
+            }
+         });
+         if(total > 0) rewardText = `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${total.toLocaleString()}</span>`;
+      }
+      boatHtml += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')" style="display:flex; justify-content:space-between; align-items:center;"><span>${r}</span> ${rewardText}</div>`;
+    }
+  });
+  if (boatCount > 0) sHtml += `<div class="section-title">🚢 船钓 (${boatCount})</div>` + boatHtml;
+
+  document.getElementById('sidebar-content').innerHTML = sHtml;
+
+  if (currentTab !== '圖鑑查詢' && !allowedRegions.has(currentTab)) {
+    currentTab = '圖鑑查詢';
+    currentSlot = null;
+    buildContext();
+    document.querySelector('.tab').classList.add('active'); 
+  }
+
+  updateGuildPanel();
+
+  if (currentTab !== '圖鑑查詢') {
+    filtered = filtered.filter(f => f.regions.includes(currentTab));
+  }
+
+  if (guildTasks) {
+    filtered.sort((a, b) => {
+      let rewardA = 0, rewardB = 0;
+      const tA = guildTasks.find(t => t.fish_name === a.name && t.status !== "已交付" && t.status !== "已完成");
+      if (tA) rewardA = tA.reward_price;
+      const tB = guildTasks.find(t => t.fish_name === b.name && t.status !== "已交付" && t.status !== "已完成");
+      if (tB) rewardB = tB.reward_price;
+      return rewardB - rewardA; 
+    });
+  }
+
+  const listC = document.getElementById('fish-list'); listC.innerHTML = '';
+  
+  if(filtered.length === 0) { listC.innerHTML = '<div style="padding:20px;text-align:center;color:#95a5a6;font-size:13px;">无符合条件的鱼种</div>'; }
+  
+  filtered.forEach(f => {
+    let lc = f.layer==='上层'?'b-up':(f.layer==='中层'?'b-mid':'b-down');
+    let isChecked = checkedFishNames.has(f.name) ? 'checked' : '';
+    
+    let fishRewardTag = '';
+    if(guildTasks) {
+       let task = guildTasks.find(t => t.fish_name === f.name && t.status !== "已交付" && t.status !== "已完成");
+       if(task) {
+          fishRewardTag = `<span style="color:#f39c12; font-size:12px; font-weight:bold;">💰${task.reward_price.toLocaleString()}</span>`;
+       }
+    }
+    
+    listC.innerHTML += `<label class="fish-item"><input type="checkbox" class="fish-checkbox" value='${JSON.stringify(f)}' onchange="handleCheck(this)" ${isChecked}><div class="fish-info">
+        <div class="f-head">
+          <span class="f-name" title="${f.name}">${f.name} ${fishRewardTag}</span>
+          <span class="tag rarity-${f.rarity}">${f.rarity}</span>
+        </div>
+        <div class="f-meta">${f.weight} | ${f.hours.join(',')}h</div>
+        <div style="display:flex;gap:3px;flex-wrap:wrap;">
+          ${f.layer ? `<span class="badge ${lc}">${f.layer}</span>` : ''}
+          ${f.bait ? `<span class="badge" style="background:${getUniqueColor(f.bait)}">${f.bait}</span>` : ''}
+          ${f.lure ? `<span class="badge" style="background:${getUniqueColor(f.lure)}">${f.lure}</span>` : ''}
+        </div>
+      </div></label>`;
+  });
+  updateChart();
+}
+
+window.handleCheck = function(checkbox) {
+  const f = JSON.parse(checkbox.value);
+  if (checkbox.checked) {
+    checkedFishNames.add(f.name);
+  } else {
+    checkedFishNames.delete(f.name);
+  }
+  
+  localStorage.setItem('lazyfisher_checked_fish', JSON.stringify(Array.from(checkedFishNames)));
+  renderFishList(); 
+}
+
+// ==============================
+// 試算器邏輯
+// ==============================
+function updIdeal() {
+  const type = document.getElementById('calc-type').value;
+  const length = parseFloat(document.getElementById('calc-len').value) || 0;
+  const weight = parseFloat(document.getElementById('calc-wt').value) || 0;
+  const hardness = parseFloat(document.getElementById('calc-hardness').value) || 0;
+  const idealContainer = document.getElementById('calc-ideal');
+  
+  localStorage.setItem('lazyfisher_rod_type', type);
+  localStorage.setItem('lazyfisher_rod_len', length);
+  localStorage.setItem('lazyfisher_rod_hardness', hardness);
+  localStorage.setItem('lazyfisher_rod_wt', weight);
+
+  let flex = 0.60;
+  if (hardness >= 8.5) flex = 1.2;
+  else if (hardness >= 7.0) flex = 1.0;
+  else if (hardness >= 4.0) flex = 0.85;
+  
+  const alphaMap = { "MATCH_ROD": 4.0, "HAND_ROD": 2.1, "BOTTOM_ROD": 4.5, "ISO_ROD": 3.2, "SURF_ROD": 6.5 };
+  const alpha = alphaMap[type] || 4.0;
+  const beta = 10.0;
+  
+  let rodIdealDist = (length * alpha) + (weight / beta) * flex;
+  
+  idealContainer.innerText = rodIdealDist.toFixed(2) + "m";
+  
+  window.currentRodIdealBase = rodIdealDist;
+  if (typeof buildContextWithoutLoop === 'function') {
+    buildContextWithoutLoop();
+  }
+}
+
+let triTrack = [];
+function onTri(field) {
+  triTrack = triTrack.filter(x => x !== field); triTrack.push(field);
+  const vC = parseFloat(document.getElementById('tri-cast').value), vD = parseFloat(document.getElementById('tri-depth').value), vL = parseFloat(document.getElementById('tri-line').value);
+  if (triTrack.length >= 2) {
+    const target = ['cast', 'depth', 'line'].find(x => x !== triTrack[triTrack.length-1] && x !== triTrack[triTrack.length-2]);
+    if (target === 'line' && !isNaN(vC) && !isNaN(vD)) {
+      document.getElementById('tri-line').value = (Math.sqrt(vC*vC + vD*vD) + 1.8).toFixed(1);
+    } else if (target === 'depth' && !isNaN(vC) && !isNaN(vL)) {
+      let val = (vL - 1.8)**2 - vC**2; document.getElementById('tri-depth').value = val >= 0 ? Math.sqrt(val).toFixed(1) : '0.0';
+    } else if (target === 'cast' && !isNaN(vD) && !isNaN(vL)) {
+      let val = (vL - 1.8)**2 - vD**2; document.getElementById('tri-cast').value = val >= 0 ? Math.sqrt(val).toFixed(1) : '0.0';
+    }
+  }
+}
+
+// ==============================
+// 遊戲時鐘與居中插件
+// ==============================
+function updateClocks() {
+  const now = new Date(); document.getElementById('real-time').innerText = now.toTimeString().split(' ')[0];
+  const elapsed = Math.floor((Date.now() - gameBaseTime) / 1000);
+  let gm = (gameHourOffset * 60 + gameMinuteOffset + elapsed) % 1440; if (gm < 0) gm += 1440;
+  const gh = Math.floor(gm / 60), gmin = gm % 60;
+  window.currentGameTimeStr = `${String(gh).padStart(2, '0')}:${String(gmin).padStart(2, '0')}`;
+  document.getElementById('game-time').innerText = window.currentGameTimeStr;
+  
+  if (chartInstance) chartInstance.update('none'); 
+  if (window.currentGameHour !== gh) { window.currentGameHour = gh; updateChart(); }
+}
+
+function calibTime() {
+  const h = parseInt(document.getElementById('calib-h').value);
+  if (!isNaN(h) && h >= 0 && h < 24) {
+    gameHourOffset = h;
+    gameMinuteOffset = 0; 
+    gameBaseTime = Date.now(); 
+    
+    localStorage.setItem('lazyfisher_game_hour', h);
+    localStorage.setItem('lazyfisher_base_time', gameBaseTime);
+  }
+  updateClocks();
+}
+
+const centerTimePlugin = {
+  id: 'centerTime',
+  beforeDraw(chart) {
+    const {ctx, width, height} = chart; ctx.save();
+    ctx.beginPath(); ctx.arc(width/2, height/2, 45, 0, 2*Math.PI);
+    ctx.fillStyle = "rgba(255,255,255,0.95)"; ctx.fill();
+    ctx.font = "bold 24px monospace"; ctx.fillStyle = "#ff4757";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(window.currentGameTimeStr, width/2, height/2 + 5);
+    ctx.font = "bold 11px sans-serif"; ctx.fillStyle = "#7f8c8d";
+    ctx.fillText("游戏时间", width/2, height/2 - 18);
+    ctx.restore();
+  }
+};
+
+// ==============================
+// 雷達圖繪製 
+// ==============================
+function updateChart() {
+  const dSets = []; let idx = 0;
+  
+  FISH_DB.forEach(f => {
+    if (checkedFishNames.has(f.name)) {
+      const color = getUniqueColor(f.name), hl = new Array(24).fill(null), ro = Math.max(0.15, 1.0 - (idx * 0.08));
+      f.hours.forEach(h => hl[h] = ro); 
+      dSets.push({ label: f.name, data: hl, fill: false, borderColor: color, borderWidth: 4, pointRadius: 3, pointBackgroundColor: color });
+      idx++;
+    }
+  });
+
+  const pt = new Array(24).fill(0); pt[window.currentGameHour] = 1.15; 
+  dSets.push({ label: '⏰ 游戏时针', data: pt, fill: false, borderColor: 'rgba(255, 71, 87, 0.4)', borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#ff4757', lineTension: 0 });
+
+  if (chartInstance) { chartInstance.destroy(); }
+  chartInstance = new Chart(document.getElementById('clockChart').getContext('2d'), {
+    type: 'radar', data: { labels: Array.from({length: 24}, (_, i) => `${i}:00`), datasets: dSets },
+    plugins: [centerTimePlugin],
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { r: { min: 0, max: 1.2, ticks: { display: false }, grid: { color: 'rgba(0,0,0,0.06)' }, angleLines: { color: 'rgba(0,0,0,0.06)' }, pointLabels: { font: { size: 12, weight: 'bold' }, color: '#34495e' } } },
+      plugins: { title: { display: true, text: dSets.length > 1 ? '🎯 时段交集比对中' : '💡 勾选鱼种查看咬口时段' }, legend: { position: 'top', labels: { boxWidth: 10 } } }
+    }
+  });
+}
+
+// ==============================
+// 🌟 載入存檔與系統初始化 (The Bootloader)
+// ==============================
+function loadSavedData() {
+  const savedHour = localStorage.getItem('lazyfisher_game_hour');
+  const savedBaseTime = localStorage.getItem('lazyfisher_base_time');
+  if (savedHour !== null && savedBaseTime !== null) {
+    document.getElementById('calib-h').value = savedHour;
+    gameHourOffset = parseInt(savedHour);
+    gameBaseTime = parseInt(savedBaseTime);
+  }
+  
+  const savedGuild = localStorage.getItem('lazyfisher_guild_tasks');
+  if (savedGuild !== null) {
+    document.getElementById('guild-input').value = savedGuild;
+    parseGuildTasks(savedGuild);
+  }
+  
+  if (localStorage.getItem('lazyfisher_rod_type') !== null) {
+    document.getElementById('calc-type').value = localStorage.getItem('lazyfisher_rod_type');
+    document.getElementById('calc-len').value = localStorage.getItem('lazyfisher_rod_len');
+    document.getElementById('calc-hardness').value = localStorage.getItem('lazyfisher_rod_hardness');
+    document.getElementById('calc-wt').value = localStorage.getItem('lazyfisher_rod_wt');
+  }
+
+  const savedCheckedFish = localStorage.getItem('lazyfisher_checked_fish');
+  if (savedCheckedFish !== null) {
+    try {
+      const fishArray = JSON.parse(savedCheckedFish);
+      if (Array.isArray(fishArray)) {
+        checkedFishNames = new Set(fishArray);
+      }
+    } catch(e) { console.error("恢復魚種紀錄失敗", e); }
+  }
+
+  const savedTab = localStorage.getItem('lazyfisher_current_tab');
+  const savedSlot = localStorage.getItem('lazyfisher_current_slot');
+  if (savedTab !== null) {
+    currentTab = savedTab;
+    if (savedSlot !== null) {
+      currentSlot = savedSlot;
+    }
+  }
+}
+
+// 🌟 新版的初始化流程：資料載入完成後才執行
+function initializeApp() {
+    loadSavedData();
+    initFilters();
+    updIdeal(); 
+    
+    // 啟動時鐘循環
+    setInterval(updateClocks, 1000); 
+    updateClocks(); 
+    
+    // 強制重新渲染左側導航與右側魚列表 (這會帶出你儲存的 currentTab)
+    buildContext();
+    renderFishList();
+}
+
+// ==============================
+// 程式進入點：開始下載資料
+// ==============================
+loadFishDatabase();
