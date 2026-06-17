@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>LazyFisher 雷达监控器 V10</title>
+<title>LazyFisher 雷达监控器 V11 (含深层几率)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎣</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -17,7 +17,7 @@
   /* 🏢 四栏式主工作区 */
   #col-nav { width: 220px; background: var(--sidebar); display: flex; flex-direction: column; z-index: 5; box-shadow: 2px 0 5px rgba(0,0,0,0.1); flex-shrink: 0;}
   #col-filters { width: 240px; background: #fff; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; z-index: 4; flex-shrink: 0;}
-  #col-list { width: 320px; background: #fdfdfd; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; z-index: 3; flex-shrink: 0;}
+  #col-list { width: 340px; background: #fdfdfd; display: flex; flex-direction: column; border-right: 1px solid #e2e8f0; z-index: 3; flex-shrink: 0;}
   #col-chart { flex: 1; background: white; display: flex; justify-content: center; align-items: center; padding: 15px; position: relative; min-width: 0;}
 
   /* 👈 第一栏: 钓场导航 */
@@ -195,10 +195,12 @@ const T2S_MAP = { '魚':'鱼', '鱈':'鳕', '鱔':'鳝', '鯧':'鲳', '鰻':'鳗
 
 const JSON_URL = 'https://gist.githubusercontent.com/DelWish-GH/fb39d922fd11ef740e6505e987c8f040/raw/LazyFisher_Fish_DEX.json';
 const REGION_URL = 'https://gist.githubusercontent.com/DelWish-GH/519361bcbbec81cf4dbe0856266cba26/raw/LazyFisher_Region.json';
+const DUMP_URL = 'https://gist.githubusercontent.com/DelWish-GH/61392a1e7eb9ce8ad8165e8a46a6b8d4/raw/LazyFisher_Fish_Dump.json';
 
 let guildTasks = null;
 const FISH_DB = []; 
 const SPOT_INFO_DB = {}; 
+const REGION_DUMP_DB = {}; // 🌟 新增：存放 React 挖掘出的深度機率數據
 const baitSet = new Set(); 
 const lureSet = new Set();
 let currentTab = '圖鑑查詢'; 
@@ -220,21 +222,24 @@ function getUniqueColor(str) {
 }
 
 // ==============================
-// 🌟 雙雲端資料載入與注入
+// 🌟 三重雲端資料載入與注入
 // ==============================
 async function loadAllDatabases() {
   try {
     const tStamp = Date.now();
-    const [fishRes, regionRes] = await Promise.all([
+    const [fishRes, regionRes, dumpRes] = await Promise.all([
       fetch(JSON_URL + '?t=' + tStamp),
-      fetch(REGION_URL + '?t=' + tStamp)
+      fetch(REGION_URL + '?t=' + tStamp),
+      fetch(DUMP_URL + '?t=' + tStamp)
     ]);
 
     if (!fishRes.ok || !regionRes.ok) throw new Error("雲端伺服器響應異常");
 
     const fishData = await fishRes.json();
     const regionData = await regionRes.json();
+    const dumpData = await dumpRes.json();
 
+    // 1. 處理基礎魚類資料
     const fishList = Array.isArray(fishData) ? fishData : (fishData.content || []);
     fishList.forEach(item => {
       const details = item.details || {};
@@ -252,6 +257,7 @@ async function loadAllDatabases() {
       });
     });
 
+    // 2. 處理基礎地圖與釣位資料
     const rawRegions = regionData.content || [];
     rawRegions.forEach(r => {
       const name = r.region_name;
@@ -270,7 +276,25 @@ async function loadAllDatabases() {
       };
     });
 
-    console.log(`✅ 初始化成功！魚類:${FISH_DB.length}筆，地圖:${Object.keys(SPOT_INFO_DB).length}個`);
+    // 3. 🌟 處理挖掘出來的深度機率數據 (LazyFisher_Fish_Dump.json)
+    dumpData.forEach(item => {
+      if (item.parent && item.parent.fish_pool && item.parent.name) {
+        const rName = item.parent.name;
+        let totalRatio = 0;
+        let fishStats = {};
+        
+        item.parent.fish_pool.forEach(f => {
+          const fName = f.ch_name || f.fish_id; // 以中文名為 Key，對接原有資料庫
+          const ratio = f.base_ratio || 0;
+          totalRatio += ratio;
+          fishStats[fName] = { ratio: ratio, size: f.size_modifier || 1 };
+        });
+        
+        REGION_DUMP_DB[rName] = { totalRatio, fishStats };
+      }
+    });
+
+    console.log(`✅ 初始化成功！魚類:${FISH_DB.length}筆，地圖:${Object.keys(SPOT_INFO_DB).length}個，深層幾率數據:${Object.keys(REGION_DUMP_DB).length}區`);
     initializeApp();
 
   } catch(e) {
@@ -330,7 +354,13 @@ function buildContextWithoutLoop() {
   panel.style.display = 'block';
   const region = SPOT_INFO_DB[currentTab];
   
-  document.getElementById('spot-title').innerHTML = `<span style="font-size:14px; font-weight:bold; color:var(--text);">📍 ${currentTab}</span>`;
+  // 🌟 標題附加：若該區有挖掘出總比率數據，顯示活躍度 %
+  let titleExtra = '';
+  if (REGION_DUMP_DB[currentTab]) {
+      const tr = parseFloat(REGION_DUMP_DB[currentTab].totalRatio.toFixed(3));
+      titleExtra = ` <span style="font-size:11px; color:#e67e22; font-weight:bold; background:#fef08a; padding:2px 6px; border-radius:4px; margin-left:6px; display:inline-block; vertical-align:middle;">🏞️:${tr}</span>`;
+  }
+  document.getElementById('spot-title').innerHTML = `<div style="font-size:14px; font-weight:bold; color:var(--text); display:flex; align-items:center;">📍 ${currentTab}${titleExtra}</div>`;
   
   const slotC = document.getElementById('slot-buttons-container'); slotC.innerHTML = '';
   (region.spots || []).forEach(s => {
@@ -340,7 +370,6 @@ function buildContextWithoutLoop() {
     slotC.appendChild(btn);
   });
   
-  // 🚀 核心：動態拆解區間字串，動態換算中心泳層點位置
   let depthHtml = '';
   if (region.depthStr && region.depthStr.includes('/')) {
     region.depthStr.split('/').forEach(layer => {
@@ -353,7 +382,6 @@ function buildContextWithoutLoop() {
       const namePart = trimmed.match(/^([^\d]+)/)?.[1] || "水层";
       const valPart = trimmed.replace(namePart, '').trim();
       
-      // 🎯 提取數值算幾何中間點
       let centerStr = '';
       const m = valPart.match(/(\d+(?:\.\d+)?)\s*–\s*(\d+(?:\.\d+)?)/);
       if (m) {
@@ -374,7 +402,6 @@ function buildContextWithoutLoop() {
     if(s) { snag = s.snag; spotCastOffset = s.castOffset || 0; }
   }
   
-  // 🚀 核心：直接加總地圖基礎與選定釣位的拋偏值，不再與竿型試算產生交集
   const totalCastOffset = (region.castOffset || 0) + spotCastOffset;
   let castDisplayHtml = `<span style="color:#8e44ad; font-weight:bold;">📏 總拋偏: <span style="font-family:monospace;">${totalCastOffset > 0 ? '+' : ''}${totalCastOffset.toFixed(1)}m</span></span>`;
   
@@ -405,6 +432,7 @@ function renderFishList() {
       if (allowedRegions.has(r)) {
         count++; let tPrice = 0;
         if(guildTasks) guildTasks.forEach(t => { if(t.status !== "已交付" && t.status !== "已完成" && FISH_DB.some(f => f.name === t.fish_name && f.regions.includes(r))) tPrice += t.reward_price; });
+        
         html += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')"><span>${r}</span>${tPrice > 0 ? `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${tPrice.toLocaleString()}</span>` : ''}</div>`;
       }
     });
@@ -415,36 +443,39 @@ function renderFishList() {
   
   buildContextWithoutLoop(); updateGuildPanel();
 
-  // 🌟 修改後的委託任務雙階排序邏輯（高難挑戰優先 ＞ 金額從高到低）
   if (guildTasks) {
     filtered.sort((a, b) => {
-      // 找出兩隻魚目前處於「未交付且未完成」的活動委託
       const tA = guildTasks.find(t => t.fish_name === a.name && t.status !== "已交付" && t.status !== "已完成");
       const tB = guildTasks.find(t => t.fish_name === b.name && t.status !== "已交付" && t.status !== "已完成");
-
       const isHighA = tA && tA.category === "高难挑战" ? 1 : 0;
       const isHighB = tB && tB.category === "高难挑战" ? 1 : 0;
 
-      // 1. 第一層排序：高難挑戰優先排在最上面
-      if (isHighA !== isHighB) {
-        return isHighB - isHighA; 
-      }
-
-      // 2. 第二層排序：同為高難挑戰，或同為每日挑戰/無任務時，依據賞金金額從高到低排序
+      if (isHighA !== isHighB) return isHighB - isHighA; 
       const priceA = tA ? tA.reward_price : 0;
       const priceB = tB ? tB.reward_price : 0;
       return priceB - priceA;
     });
   }
+  
   const listC = document.getElementById('fish-list'); listC.innerHTML = '';
   if(filtered.length === 0) listC.innerHTML = '<div style="padding:20px;text-align:center;color:#95a5a6;">无符合条件的鱼种</div>';
   
   filtered.forEach(f => {
     let lc = f.layer==='上层'?'b-up':(f.layer==='中层'?'b-mid':'b-down'), isChecked = checkedFishNames.has(f.name) ? 'checked' : '';
     let t = guildTasks?.find(x => x.fish_name === f.name && x.status !== "已交付" && x.status !== "已完成");
+    
+    // 🌟 修改：將深層機率數據整合到原有字串中
+    let dumpStatsStr = '';
+    if (currentTab !== '圖鑑查詢' && REGION_DUMP_DB[currentTab] && REGION_DUMP_DB[currentTab].fishStats[f.name]) {
+        const stats = REGION_DUMP_DB[currentTab].fishStats[f.name];
+        // 將 ratio 轉為百分比顯示更直觀，也可以保留小數點
+        const ratioPct = stats.ratio; 
+        dumpStatsStr = ` | 📏:${stats.size} | 🎲:${ratioPct}`;
+    }
+
     listC.innerHTML += `<label class="fish-item"><input type="checkbox" class="fish-checkbox" value='${JSON.stringify(f)}' onchange="handleCheck(this)" ${isChecked}><div class="fish-info">
         <div class="f-head"><span class="f-name">${f.name}${t ? `<span style="color:#f39c12; font-size:12px; font-weight:bold;">💰${t.reward_price.toLocaleString()}</span>` : ''}</span><span class="tag rarity-${f.rarity}">${f.rarity}</span></div>
-        <div class="f-meta">${f.weight} | ${f.hours.join(',')}h</div>
+        <div class="f-meta">${f.weight} | ${f.hours.join(',')}h${dumpStatsStr}</div>
         <div style="display:flex;gap:3px;flex-wrap:wrap;"><span class="badge ${lc}">${f.layer}</span>${f.bait ? `<span class="badge" style="background:${getUniqueColor(f.bait)}">${f.bait}</span>` : ''}${f.lure ? `<span class="badge" style="background:${getUniqueColor(f.lure)}">${f.lure}</span>` : ''}</div>
       </div></label>`;
   });
