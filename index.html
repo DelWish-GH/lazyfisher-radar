@@ -345,7 +345,7 @@ function buildContext() {
 }
 
 // ==============================
-// 🌟 3. 面板渲染核心 (加入中心點換算與純淨拋偏)
+// 🌟 3. 面板渲染核心 (解決浮點數問題)
 // ==============================
 function buildContextWithoutLoop() {
   const panel = document.getElementById('spot-context-panel');
@@ -354,11 +354,11 @@ function buildContextWithoutLoop() {
   panel.style.display = 'block';
   const region = SPOT_INFO_DB[currentTab];
   
-  // 🌟 標題附加：若該區有挖掘出總比率數據，顯示活躍度 %
+  // 🌟 標題附加：修復浮點數過長問題 (例如 1.4100000000000004 -> 1.41)
   let titleExtra = '';
   if (REGION_DUMP_DB[currentTab]) {
       const tr = parseFloat(REGION_DUMP_DB[currentTab].totalRatio.toFixed(3));
-      titleExtra = ` <span style="font-size:11px; color:#e67e22; font-weight:bold; background:#fef08a; padding:2px 6px; border-radius:4px; margin-left:6px; display:inline-block; vertical-align:middle;">🏞️:${tr}</span>`;
+      titleExtra = ` <span style="font-size:11px; color:#e67e22; font-weight:bold; background:#fef08a; padding:2px 6px; border-radius:4px; margin-left:6px; display:inline-block; vertical-align:middle;">🏞 : ${tr}</span>`;
   }
   document.getElementById('spot-title').innerHTML = `<div style="font-size:14px; font-weight:bold; color:var(--text); display:flex; align-items:center;">📍 ${currentTab}${titleExtra}</div>`;
   
@@ -433,7 +433,14 @@ function renderFishList() {
         count++; let tPrice = 0;
         if(guildTasks) guildTasks.forEach(t => { if(t.status !== "已交付" && t.status !== "已完成" && FISH_DB.some(f => f.name === t.fish_name && f.regions.includes(r))) tPrice += t.reward_price; });
         
-        html += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')"><span>${r}</span>${tPrice > 0 ? `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${tPrice.toLocaleString()}</span>` : ''}</div>`;
+        let ratioHtml = '';
+        if (REGION_DUMP_DB[r]) {
+            // 側邊欄也順便加上 parseFloat 修復浮點數顯示
+            const tr = parseFloat(REGION_DUMP_DB[r].totalRatio.toFixed(3));
+            ratioHtml = `<span style="color:#a8e6cf; font-size:10px; margin-left:4px;">(${tr})</span>`;
+        }
+
+        html += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')"><span>${r}${ratioHtml}</span>${tPrice > 0 ? `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${tPrice.toLocaleString()}</span>` : ''}</div>`;
       }
     });
     return count > 0 ? `<div class="section-title">${title} (${count})</div>` + html : '';
@@ -464,13 +471,20 @@ function renderFishList() {
     let lc = f.layer==='上层'?'b-up':(f.layer==='中层'?'b-mid':'b-down'), isChecked = checkedFishNames.has(f.name) ? 'checked' : '';
     let t = guildTasks?.find(x => x.fish_name === f.name && x.status !== "已交付" && x.status !== "已完成");
     
-    // 🌟 修改：將深層機率數據整合到原有字串中
+    // 🌟 真實機率換算核心
     let dumpStatsStr = '';
     if (currentTab !== '圖鑑查詢' && REGION_DUMP_DB[currentTab] && REGION_DUMP_DB[currentTab].fishStats[f.name]) {
         const stats = REGION_DUMP_DB[currentTab].fishStats[f.name];
-        // 將 ratio 轉為百分比顯示更直觀，也可以保留小數點
-        const ratioPct = stats.ratio; 
-        dumpStatsStr = ` | 📏:${stats.size} | 🎲:${ratioPct}`;
+        const totalRatio = REGION_DUMP_DB[currentTab].totalRatio;
+        
+        // 公式：(自身 base_ratio / 該釣場總 base_ratio) * 100
+        let relativeProb = 0;
+        if (totalRatio > 0) {
+            relativeProb = (stats.ratio / totalRatio) * 100;
+        }
+        
+        // 格式化：接在原本的字串後方
+        dumpStatsStr = ` | 📏:${stats.size} | 🎲:${relativeProb.toFixed(1)}%`;
     }
 
     listC.innerHTML += `<label class="fish-item"><input type="checkbox" class="fish-checkbox" value='${JSON.stringify(f)}' onchange="handleCheck(this)" ${isChecked}><div class="fish-info">
