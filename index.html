@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>LazyFisher 雷达监控器 V11 (含深层几率)</title>
+<title>LazyFisher 雷达监控器 V12 (动态几率修復版)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎣</text></svg>">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -57,7 +57,11 @@
   #search-input { width: 100%; padding: 8px; border: 2px solid #bdc3c7; border-radius: 6px; box-sizing: border-box; font-size: 13px; outline: none; margin-bottom: 8px;}
   #search-input:focus { border-color: var(--primary); }
   
-  #clear-btn { width: 100%; padding: 6px; background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s;}
+  /* 🌟 工具列排版 */
+  .toolbar-row { display: flex; gap: 6px; align-items: center; }
+  .toolbar-select { flex: 1; padding: 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; outline: none; background: #f8fafc; color: #334155; }
+  .toolbar-select:focus { border-color: var(--primary); }
+  #clear-btn { padding: 6px 12px; background: #e2e8f0; color: #475569; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 12px; font-weight: bold; cursor: pointer; transition: 0.2s; white-space: nowrap;}
   #clear-btn:hover { background: #cbd5e1; color: #1e293b; }
 
   #fish-list-container { flex-grow: 1; overflow-y: auto; padding: 10px; background: #f8fafc;}
@@ -141,7 +145,41 @@
 <div id="col-list">
   <div id="search-box">
     <input type="search" id="search-input" placeholder="🔍 搜寻鱼种...">
-    <button id="clear-btn" onclick="clearChecked()">🧹 清空所有打勾状态</button>
+    <div class="toolbar-row">
+      <button id="clear-btn" onclick="clearChecked()">🧹 清空打勾</button>
+      <select id="select-layer" class="toolbar-select" onchange="renderFishList()">
+        <option value="">-- 水层 --</option>
+        <option value="上层">上层</option>
+        <option value="中层">中层</option>
+        <option value="下层">下层</option>
+      </select>
+      <select id="select-bait" class="toolbar-select" onchange="renderFishList()">
+        <option value="">-- 饵料 --</option>
+        <optgroup label="活饵">
+            <option value="藻饵团">藻饵团</option>
+            <option value="虫饵">虫饵</option>
+            <option value="玉米">玉米</option>
+            <option value="谷物">谷物</option>
+            <option value="草饵">草饵</option>
+            <option value="昆虫">昆虫</option>
+            <option value="颗粒">颗粒</option>
+            <option value="虾饵">虾饵</option>
+            <option value="螺肉">螺肉</option>
+            <option value="面饵">面饵</option>
+            <option value="活小鱼">活小鱼</option>
+            <option value="蟹饵">蟹饵</option>
+            <option value="贝类">贝类</option>
+        </optgroup>
+        <optgroup label="拟饵">
+            <option value="水面系">水面系</option>
+            <option value="米诺">米诺</option>
+            <option value="亮片">亮片</option>
+            <option value="摇滚">摇滚</option>
+            <option value="软饵">软饵</option>
+            <option value="铅头钩">铅头钩</option>
+        </optgroup>
+      </select>
+    </div>
   </div>
   <div id="guild-panel" style="display:none; padding:12px; background:#fff3e0; border-bottom:1px solid #f39c12;"></div>
   <div id="fish-list-container"><div id="fish-list"></div></div>
@@ -153,7 +191,7 @@
 
 <script>
 // ==============================
-// 🌟 1. 静态地图对照库 (仅存原生拋偏)
+// 🌟 1. 静态地图对照库
 // ==============================
 const STATIC_REGION_EXT = {
   "青溪镇·村边鱼塘": { castOffset: -1.6, spots: { "近岸缓坡": -2, "深浅交界": 1.6, "水草阴影": -0.4 } },
@@ -200,7 +238,7 @@ const DUMP_URL = 'https://gist.githubusercontent.com/DelWish-GH/61392a1e7eb9ce8a
 let guildTasks = null;
 const FISH_DB = []; 
 const SPOT_INFO_DB = {}; 
-const REGION_DUMP_DB = {}; // 🌟 新增：存放 React 挖掘出的深度機率數據
+const REGION_DUMP_DB = {}; 
 const baitSet = new Set(); 
 const lureSet = new Set();
 let currentTab = '圖鑑查詢'; 
@@ -211,9 +249,6 @@ window.currentGameHour = 0;
 window.currentGameTimeStr = "00:00";
 let checkedFishNames = new Set();
 
-// ==============================
-// 🌟 基礎工具函數
-// ==============================
 function toSimplified(str) { return str.split('').map(c => T2S_MAP[c] || c).join(''); }
 function tcscMatch(text, keyword) { return !keyword || toSimplified(text.toLowerCase()).includes(toSimplified(keyword.toLowerCase())); }
 function getUniqueColor(str) {
@@ -221,8 +256,54 @@ function getUniqueColor(str) {
   return `hsl(${Math.abs(hash) % 360}, 85%, 45%)`;
 }
 
+// 🌟 水層轉換常數 (用於計算相鄰差距)
+const LAYER_ORDER = { "表层": 0, "上层": 1, "中层": 2, "下层": 3, "底层": 4 };
+
 // ==============================
-// 🌟 三重雲端資料載入與注入
+// 🌟 核心引擎：即時機率加權運算
+// ==============================
+function getDynamicWeights(regionName) {
+  const selectedLayer = document.getElementById('select-layer').value;
+  const selectedBait = document.getElementById('select-bait').value;
+  let totalWeightedRatio = 0;
+  let weightedFishDict = {};
+
+  if (!REGION_DUMP_DB[regionName]) return { total: 0, dict: {} };
+
+  const allFishInSpot = FISH_DB.filter(f => f.regions.includes(regionName));
+  allFishInSpot.forEach(f => {
+    const stats = REGION_DUMP_DB[regionName].fishStats[f.name];
+    if (stats) {
+      // 1. 計算水層加權
+      let wLayer = 1.0;
+      if (selectedLayer && f.layer) {
+        let idx1 = LAYER_ORDER[selectedLayer] !== undefined ? LAYER_ORDER[selectedLayer] : 1;
+        let idx2 = LAYER_ORDER[f.layer] !== undefined ? LAYER_ORDER[f.layer] : 1;
+        let diff = Math.abs(idx1 - idx2);
+        
+        if (diff === 0) wLayer = 1.0;          
+        else if (diff === 1) wLayer = 0.6;     
+        else wLayer = 0.25;                    
+      }
+      
+      // 2. 計算餌料加權
+      let wBait = 1.0;
+      if (selectedBait) {
+        if (f.bait === selectedBait || f.lure === selectedBait) wBait = 1.0; 
+        else wBait = 0.55; 
+      }
+      
+      const finalWeightedRatio = stats.ratio * wLayer * wBait;
+      weightedFishDict[f.name] = finalWeightedRatio;
+      totalWeightedRatio += finalWeightedRatio;
+    }
+  });
+
+  return { total: totalWeightedRatio, dict: weightedFishDict };
+}
+
+// ==============================
+// 🌟 雲端資料載入與注入
 // ==============================
 async function loadAllDatabases() {
   try {
@@ -239,7 +320,6 @@ async function loadAllDatabases() {
     const regionData = await regionRes.json();
     const dumpData = await dumpRes.json();
 
-    // 1. 處理基礎魚類資料
     const fishList = Array.isArray(fishData) ? fishData : (fishData.content || []);
     fishList.forEach(item => {
       const details = item.details || {};
@@ -257,7 +337,6 @@ async function loadAllDatabases() {
       });
     });
 
-    // 2. 處理基礎地圖與釣位資料
     const rawRegions = regionData.content || [];
     rawRegions.forEach(r => {
       const name = r.region_name;
@@ -276,7 +355,6 @@ async function loadAllDatabases() {
       };
     });
 
-    // 3. 🌟 處理挖掘出來的深度機率數據 (LazyFisher_Fish_Dump.json)
     dumpData.forEach(item => {
       if (item.parent && item.parent.fish_pool && item.parent.name) {
         const rName = item.parent.name;
@@ -284,7 +362,7 @@ async function loadAllDatabases() {
         let fishStats = {};
         
         item.parent.fish_pool.forEach(f => {
-          const fName = f.ch_name || f.fish_id; // 以中文名為 Key，對接原有資料庫
+          const fName = f.ch_name || f.fish_id; 
           const ratio = f.base_ratio || 0;
           totalRatio += ratio;
           fishStats[fName] = { ratio: ratio, size: f.size_modifier || 1 };
@@ -298,7 +376,7 @@ async function loadAllDatabases() {
     initializeApp();
 
   } catch(e) {
-    console.error("❌ 核心啟動鏈崩潰:", e);
+    console.error("❌ 核心啟提鏈崩潰:", e);
     document.getElementById('fish-list').innerHTML = `<div style="padding:20px; color:red; font-size:12px; background:#fff5f5;">資料庫加載失敗: ${e.message}</div>`;
   }
 }
@@ -325,11 +403,13 @@ function updateGuildPanel() {
 }
 
 function initFilters() {
+  // 🌟 修復：重新恢復中欄過濾器的標籤建立與綁定
   const fBait = document.getElementById('tags-bait'), fLure = document.getElementById('tags-lure');
   fBait.innerHTML = ''; fLure.innerHTML = '';
   Array.from(baitSet).sort().forEach(b => { if(b) fBait.innerHTML += `<label style="border-bottom: 2px solid ${getUniqueColor(b)}"><input type="checkbox" value="${b}">${b}</label>`; });
   Array.from(lureSet).sort().forEach(l => { if(l) fLure.innerHTML += `<label style="border-bottom: 2px solid ${getUniqueColor(l)}"><input type="checkbox" value="${l}">${l}</label>`; });
   document.querySelectorAll('.filter-tags input').forEach(i => i.addEventListener('change', renderFishList));
+  
   document.getElementById('search-input').addEventListener('input', renderFishList);
 }
 
@@ -344,9 +424,6 @@ function buildContext() {
   buildContextWithoutLoop();
 }
 
-// ==============================
-// 🌟 3. 面板渲染核心 (解決浮點數問題)
-// ==============================
 function buildContextWithoutLoop() {
   const panel = document.getElementById('spot-context-panel');
   if (currentTab === '圖鑑查詢' || !SPOT_INFO_DB[currentTab]) { panel.style.display = 'none'; return; }
@@ -354,13 +431,7 @@ function buildContextWithoutLoop() {
   panel.style.display = 'block';
   const region = SPOT_INFO_DB[currentTab];
   
-  // 🌟 標題附加：修復浮點數過長問題 (例如 1.4100000000000004 -> 1.41)
-  let titleExtra = '';
-  if (REGION_DUMP_DB[currentTab]) {
-      const tr = parseFloat(REGION_DUMP_DB[currentTab].totalRatio.toFixed(3));
-      titleExtra = ` <span style="font-size:11px; color:#e67e22; font-weight:bold; background:#fef08a; padding:2px 6px; border-radius:4px; margin-left:6px; display:inline-block; vertical-align:middle;">🏞 : ${tr}</span>`;
-  }
-  document.getElementById('spot-title').innerHTML = `<div style="font-size:14px; font-weight:bold; color:var(--text); display:flex; align-items:center;">📍 ${currentTab}${titleExtra}</div>`;
+  document.getElementById('spot-title').innerHTML = `<div style="font-size:14px; font-weight:bold; color:var(--text); display:flex; align-items:center;">📍 ${currentTab}</div>`;
   
   const slotC = document.getElementById('slot-buttons-container'); slotC.innerHTML = '';
   (region.spots || []).forEach(s => {
@@ -412,12 +483,14 @@ function buildContextWithoutLoop() {
 }
 
 function renderFishList() {
+  // 🌟 修復：恢復中欄過濾器的實際過濾功能
   const L = Array.from(document.querySelectorAll('#tags-layer input:checked')).map(e=>e.value);
   const B = Array.from(document.querySelectorAll('#tags-bait input:checked')).map(e=>e.value);
   const R = Array.from(document.querySelectorAll('#tags-lure input:checked')).map(e=>e.value);
   const K = document.getElementById('search-input').value.trim();
   
   let baseFiltered = FISH_DB.filter(f => (L.length===0 || L.includes(f.layer)) && (B.length===0 || B.includes(f.bait)) && (R.length===0 || R.includes(f.lure)) && tcscMatch(f.name, K));
+  
   const allowedRegions = new Set();
   if (checkedFishNames.size > 0) { FISH_DB.forEach(f => { if (checkedFishNames.has(f.name)) f.regions.forEach(r => allowedRegions.add(r)); }); }
   else { baseFiltered.forEach(f => f.regions.forEach(r => allowedRegions.add(r))); }
@@ -433,14 +506,7 @@ function renderFishList() {
         count++; let tPrice = 0;
         if(guildTasks) guildTasks.forEach(t => { if(t.status !== "已交付" && t.status !== "已完成" && FISH_DB.some(f => f.name === t.fish_name && f.regions.includes(r))) tPrice += t.reward_price; });
         
-        let ratioHtml = '';
-        if (REGION_DUMP_DB[r]) {
-            // 側邊欄也順便加上 parseFloat 修復浮點數顯示
-            const tr = parseFloat(REGION_DUMP_DB[r].totalRatio.toFixed(3));
-            ratioHtml = `<span style="color:#a8e6cf; font-size:10px; margin-left:4px;">(${tr})</span>`;
-        }
-
-        html += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')"><span>${r}${ratioHtml}</span>${tPrice > 0 ? `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${tPrice.toLocaleString()}</span>` : ''}</div>`;
+        html += `<div class="tab ${currentTab === r ? 'active' : ''}" onclick="switchTab('${r}')"><span>${r}</span>${tPrice > 0 ? `<span style="color:#f39c12; font-size:10px; font-weight:bold;">💰${tPrice.toLocaleString()}</span>` : ''}</div>`;
       }
     });
     return count > 0 ? `<div class="section-title">${title} (${count})</div>` + html : '';
@@ -464,6 +530,11 @@ function renderFishList() {
     });
   }
   
+  let currentSpotDynamicStats = null;
+  if (currentTab !== '圖鑑查詢' && REGION_DUMP_DB[currentTab]) {
+      currentSpotDynamicStats = getDynamicWeights(currentTab);
+  }
+
   const listC = document.getElementById('fish-list'); listC.innerHTML = '';
   if(filtered.length === 0) listC.innerHTML = '<div style="padding:20px;text-align:center;color:#95a5a6;">无符合条件的鱼种</div>';
   
@@ -471,20 +542,21 @@ function renderFishList() {
     let lc = f.layer==='上层'?'b-up':(f.layer==='中层'?'b-mid':'b-down'), isChecked = checkedFishNames.has(f.name) ? 'checked' : '';
     let t = guildTasks?.find(x => x.fish_name === f.name && x.status !== "已交付" && x.status !== "已完成");
     
-    // 🌟 真實機率換算核心
     let dumpStatsStr = '';
-    if (currentTab !== '圖鑑查詢' && REGION_DUMP_DB[currentTab] && REGION_DUMP_DB[currentTab].fishStats[f.name]) {
+    if (currentSpotDynamicStats && currentSpotDynamicStats.dict[f.name] !== undefined) {
         const stats = REGION_DUMP_DB[currentTab].fishStats[f.name];
-        const totalRatio = REGION_DUMP_DB[currentTab].totalRatio;
+        const weightedRatio = currentSpotDynamicStats.dict[f.name];
+        const totalWeightedRatio = currentSpotDynamicStats.total;
         
-        // 公式：(自身 base_ratio / 該釣場總 base_ratio) * 100
         let relativeProb = 0;
-        if (totalRatio > 0) {
-            relativeProb = (stats.ratio / totalRatio) * 100;
+        if (totalWeightedRatio > 0) {
+            relativeProb = (weightedRatio / totalWeightedRatio) * 100;
         }
         
-        // 格式化：接在原本的字串後方
-        dumpStatsStr = ` | 📏:${stats.size} | 🎲:${relativeProb.toFixed(1)}%`;
+        const isPenalized = weightedRatio < stats.ratio;
+        const colorStyle = isPenalized ? 'color:#94a3b8;' : 'color:#10b981; font-weight:bold;';
+        
+        dumpStatsStr = ` | 📏:${stats.size} | <span style="${colorStyle}">🎲:${relativeProb.toFixed(1)}%</span>`;
     }
 
     listC.innerHTML += `<label class="fish-item"><input type="checkbox" class="fish-checkbox" value='${JSON.stringify(f)}' onchange="handleCheck(this)" ${isChecked}><div class="fish-info">
@@ -493,6 +565,8 @@ function renderFishList() {
         <div style="display:flex;gap:3px;flex-wrap:wrap;"><span class="badge ${lc}">${f.layer}</span>${f.bait ? `<span class="badge" style="background:${getUniqueColor(f.bait)}">${f.bait}</span>` : ''}${f.lure ? `<span class="badge" style="background:${getUniqueColor(f.lure)}">${f.lure}</span>` : ''}</div>
       </div></label>`;
   });
+  
+  // 🌟 修復：確保在最後呼叫，讓右側雷達圖正常顯示
   updateChart();
 }
 
@@ -503,7 +577,17 @@ window.handleCheck = function(checkbox) {
   renderFishList(); 
 }
 
-function clearChecked() { checkedFishNames.clear(); localStorage.removeItem('lazyfisher_checked_fish'); renderFishList(); }
+function clearChecked() { 
+  checkedFishNames.clear(); 
+  localStorage.removeItem('lazyfisher_checked_fish'); 
+  
+  // 🌟 修復：清空所有選擇狀態 (下拉選單與核取方塊)
+  document.getElementById('select-layer').value = '';
+  document.getElementById('select-bait').value = '';
+  document.querySelectorAll('.filter-tags input').forEach(i => i.checked = false);
+  
+  renderFishList(); 
+}
 
 function updateClocks() {
   document.getElementById('real-time').innerText = new Date().toTimeString().split(' ')[0];
