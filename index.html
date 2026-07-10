@@ -510,7 +510,6 @@ function renderFishList() {
         count++; let tPrice = 0;
         if(guildTasks) guildTasks.forEach(t => { if(t.status !== "已交付" && t.status !== "已完成" && FISH_DB.some(f => f.name === t.fish_name && f.regions.includes(r))) tPrice += t.reward_price; });
         
-        // 🌟 獲取 soft_limit_kg 並整合進左側標籤 (無底色，鎖頭符號)
         let limitHtml = '';
         if (REGION_DUMP_DB[r] && REGION_DUMP_DB[r].softLimit > 0) {
             limitHtml = `<span style="font-size:10px; color:#bdc3c7; margin-left:6px; font-family:monospace;">🔒${REGION_DUMP_DB[r].softLimit}kg</span>`;
@@ -526,20 +525,61 @@ function renderFishList() {
   
   buildContextWithoutLoop(); updateGuildPanel();
 
-  if (guildTasks) {
-    filtered.sort((a, b) => {
+  // ==========================================
+  // 🌟 整合自定義排序邏輯 (工會任務 > 水層 > 餌料 > 重量)
+  // ==========================================
+  filtered.sort((a, b) => {
+    // 1. 工會任務優先排序 (高難 > 每日 > 價格)
+    if (guildTasks) {
       const tA = guildTasks.find(t => t.fish_name === a.name && t.status !== "已交付" && t.status !== "已完成");
       const tB = guildTasks.find(t => t.fish_name === b.name && t.status !== "已交付" && t.status !== "已完成");
-      const isHighA = tA && tA.category === "高难挑战" ? 1 : 0;
-      const isHighB = tB && tB.category === "高难挑战" ? 1 : 0;
+      
+      if (tA || tB) {
+        if (tA && !tB) return -1;
+        if (!tA && tB) return 1;
+        
+        const isHighA = tA.category === "高难挑战" ? 1 : 0;
+        const isHighB = tB.category === "高难挑战" ? 1 : 0;
+        
+        if (isHighA !== isHighB) return isHighB - isHighA; 
+        return tB.reward_price - tA.reward_price;
+      }
+    }
 
-      if (isHighA !== isHighB) return isHighB - isHighA; 
-      const priceA = tA ? tA.reward_price : 0;
-      const priceB = tB ? tB.reward_price : 0;
-      return priceB - priceA;
-    });
-  }
-  
+    // 2. 按水層排序
+    const layerOrder = { '上层': 1, '中层': 2, '下层': 3 };
+    const orderA = layerOrder[a.layer] || 9;
+    const orderB = layerOrder[b.layer] || 9;
+    if (orderA !== orderB) return orderA - orderB;
+
+    // 3. 按餌料/擬餌排序 (這裡預設以擬餌為優先判斷，若無擬餌則判斷真餌)
+    const valA = a.lure ? a.lure : a.bait;
+    const valB = b.lure ? b.lure : b.bait;
+    if ((valA || '') !== (valB || '')) return (valA || '').localeCompare((valB || ''), 'zh-CN');
+
+    // 4. 按重量大到小排序
+    // 解析 A 重量
+    let wA = 0;
+    const matchA = [...(a.weight || '0g').matchAll(/([\d.]+)\s*(kg|g)/gi)];
+    if (matchA.length > 0) {
+        const last = matchA[matchA.length - 1];
+        wA = parseFloat(last[1]) || 0;
+        if (last[2].toLowerCase() === 'kg') wA *= 1000;
+    }
+    
+    // 解析 B 重量
+    let wB = 0;
+    const matchB = [...(b.weight || '0g').matchAll(/([\d.]+)\s*(kg|g)/gi)];
+    if (matchB.length > 0) {
+        const last = matchB[matchB.length - 1];
+        wB = parseFloat(last[1]) || 0;
+        if (last[2].toLowerCase() === 'kg') wB *= 1000;
+    }
+
+    return wB - wA;
+  });
+  // ==========================================
+
   let currentSpotDynamicStats = null;
   if (currentTab !== '圖鑑查詢' && REGION_DUMP_DB[currentTab]) {
       currentSpotDynamicStats = getDynamicWeights(currentTab);
